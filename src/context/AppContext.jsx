@@ -1,0 +1,1827 @@
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+} from "react";
+
+import {
+  DEFAULT_EMPLOYEES,
+  DEFAULT_MENU,
+} from "../data/seedData.js";
+
+import { normalizeName } from "../utils/validation.js";
+import { supabase, isSupabaseConfigured } from "../lib/supabase.js";
+
+const AppContext = createContext(null);
+
+const LS_KEYS = {
+  employees: "op_employees",
+  menu: "op_menu",
+  orders: "op_orders",
+  theme: "op_theme",
+  surplusClaims: "op_surplus_claims",
+  loginRequests: "op_login_requests",
+  editRequests: "op_edit_requests",
+  currentUser: "op_current_user",
+  currentPage: "op_current_page",
+  bookingDeadlines: "op_booking_deadlines",
+};
+
+function loadLS(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveLS(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Frontend-only app.
+  }
+}
+
+export function todayDateKey() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function todayLabel() {
+  return new Date().toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export function todayWeekday() {
+  return new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+  });
+}
+
+function normalizeEmployee(employee) {
+  return {
+    name: employee?.name || "",
+    role:
+      employee?.role ||
+      (employee?.isOwner
+        ? "owner"
+        : employee?.isAdmin
+          ? "admin"
+          : "employee"),
+    isAdmin: Boolean(employee?.isAdmin),
+    isOwner: Boolean(employee?.isOwner),
+    adminPin: employee?.adminPin || "",
+    userType: employee?.userType || (employee?.role === "guest" ? "guest" : "employee"),
+    temporaryUntil: employee?.temporaryUntil || null,
+  };
+}
+
+function getDefaultEmployees() {
+  return DEFAULT_EMPLOYEES.map(normalizeEmployee);
+}
+
+function normalizeStoredEmployees(stored) {
+  if (!Array.isArray(stored) || stored.length === 0) {
+    return getDefaultEmployees();
+  }
+
+  // Remove the old numeric-ID system if an old version is still stored.
+  if (stored.some((employee) => employee?.id !== undefined)) {
+    return getDefaultEmployees();
+  }
+
+  let result = stored.map(normalizeEmployee);
+
+  // Always make sure the owner exists and can never lose owner/admin access.
+  const hasMohit = result.some(
+    (employee) => normalizeName(employee.name) === "mohit"
+  );
+
+  if (!hasMohit) {
+    result = [getDefaultEmployees()[0], ...result];
+  }
+
+  return result.map((employee) => {
+    if (normalizeName(employee.name) !== "mohit") {
+      return employee;
+    }
+
+    return {
+      ...employee,
+      name: "Mohit",
+      role: "owner",
+      isAdmin: true,
+      isOwner: true,
+      adminPin: employee.adminPin || "2468",
+    };
+  });
+}
+
+export function AppProvider({ children }) {
+  const [employees, setEmployees] = useState(() =>
+    normalizeStoredEmployees(
+      loadLS(LS_KEYS.employees, null)
+    )
+  );
+
+  const [menu, setMenu] = useState(() =>
+    loadLS(LS_KEYS.menu, DEFAULT_MENU)
+  );
+
+  const [orders, setOrders] = useState(() =>
+    loadLS(LS_KEYS.orders, {})
+  );
+
+  const [theme, setTheme] = useState(() =>
+    loadLS(LS_KEYS.theme, "dark")
+  );
+
+  /*
+   * New claim shape:
+   * {
+   *   "2026-08-13": {
+   *     "Sunny": { bowl1: 1, bread: 1 },
+   *     "Aman": { rice: 1 }
+   *   }
+   * }
+   *
+   * This lets us release a surplus when the same employee
+   * later presses minus.
+   */
+  const [surplusClaims, setSurplusClaims] = useState(() =>
+    loadLS(LS_KEYS.surplusClaims, {})
+  );
+
+  const [loginRequests, setLoginRequests] = useState(() =>
+    loadLS(LS_KEYS.loginRequests, [])
+  );
+
+  const [editRequests, setEditRequests] = useState(() =>
+    loadLS(LS_KEYS.editRequests, [])
+  );
+
+  const [currentUser, setCurrentUser] = useState(() =>
+    loadLS(LS_KEYS.currentUser, null)
+  );
+
+  const [currentPage, setCurrentPage] = useState(() =>
+    loadLS(LS_KEYS.currentPage, "login")
+  );
+
+  // Persist the logged-in user and current page across browser refreshes.
+useEffect(() => {
+  saveLS(LS_KEYS.currentUser, currentUser);
+}, [currentUser]);
+
+useEffect(() => {
+  saveLS(LS_KEYS.currentPage, currentPage);
+}, [currentPage]);
+
+  // Per-day employee booking deadlines. The normal daily deadline is 11:30 AM.
+  // Admin/Owner can temporarily relax today's deadline for special occasions.
+  const [bookingDeadlines, setBookingDeadlines] = useState(() =>
+    loadLS(LS_KEYS.bookingDeadlines, {})
+  );
+
+  const [cloudReady, setCloudReady] = useState(!isSupabaseConfigured);
+
+  const [cloudStatus, setCloudStatus] = useState(
+    isSupabaseConfigured ? "connecting" : "local"
+  );
+
+  /*
+   * Requirement 2 synchronization guards.
+   *
+   * A Realtime update is already coming FROM Supabase,
+   * so we must not immediately write that same snapshot
+   * back to Supabase.
+   */
+  const skipNextCloudSyncRef = useRef(false);
+  const cloudSyncTimerRef = useRef(null);
+  const cloudSyncVersionRef = useRef(0);
+
+  /*
+   * ==========================================================
+   * GENERIC CLOUD STATE SYNC
+   * ==========================================================
+   *
+   * IMPORTANT:
+   *
+   * `orders` is intentionally NOT written here anymore.
+   *
+   * Orders are now saved through the atomic
+   * `upsert_lunch_order()` PostgreSQL function.
+   *
+   * This prevents an older browser snapshot from overwriting
+   * a newer employee order.
+   */
+  const persistCloud = useCallback(async (snapshot) => {
+    if (!isSupabaseConfigured || !cloudReady) return;
+
+    const version = ++cloudSyncVersionRef.current;
+
+    const basePayload = {
+      employees: snapshot.employees,
+      menu: snapshot.menu,
+      surplus_claims: snapshot.surplusClaims,
+      login_requests: snapshot.loginRequests,
+      updated_at: new Date().toISOString(),
+    };
+
+    let { error } = await supabase
+      .from("office_app_state")
+      .update({
+        ...basePayload,
+        edit_requests: snapshot.editRequests,
+      })
+      .eq("id", 1);
+
+    // Compatibility with an older table that does not yet have edit_requests.
+    if (error && /edit_requests|column/i.test(error.message || "")) {
+      ({ error } = await supabase
+        .from("office_app_state")
+        .update(basePayload)
+        .eq("id", 1));
+    }
+
+    if (version !== cloudSyncVersionRef.current) return;
+
+    if (error) {
+      console.error("Supabase sync error:", error);
+      setCloudStatus("error");
+    } else {
+      setCloudStatus("online");
+    }
+  }, [cloudReady]);
+  /*
+   * One debounced writer for the complete shared state,
+   * EXCEPT ORDERS.
+   *
+   * Orders have their own atomic database operation.
+   */
+  useEffect(() => {
+    if (!isSupabaseConfigured || !cloudReady) return;
+
+    if (skipNextCloudSyncRef.current) {
+      skipNextCloudSyncRef.current = false;
+      return;
+    }
+
+    if (cloudSyncTimerRef.current) {
+      clearTimeout(cloudSyncTimerRef.current);
+    }
+
+    cloudSyncTimerRef.current = window.setTimeout(() => {
+      void persistCloud({
+        employees,
+        menu,
+        surplusClaims,
+        loginRequests,
+        editRequests,
+        bookingDeadlines,
+      });
+    }, 150);
+
+    return () => {
+      if (cloudSyncTimerRef.current) {
+        clearTimeout(cloudSyncTimerRef.current);
+        cloudSyncTimerRef.current = null;
+      }
+    };
+  }, [
+    employees,
+    menu,
+    surplusClaims,
+    loginRequests,
+    editRequests,
+    bookingDeadlines,
+    cloudReady,
+    persistCloud,
+  ]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let cancelled = false;
+
+    const loadCloud = async () => {
+      setCloudStatus("connecting");
+
+      let { data, error } = await supabase
+        .from("office_app_state")
+        .select(
+          "id, employees, menu, orders, surplus_claims, login_requests, edit_requests, booking_deadlines, updated_at"
+        )
+        .eq("id", 1)
+        .maybeSingle();
+
+      // Older schema compatibility: load without edit_requests if that
+      // column has not been added yet.
+      if (error && /edit_requests|column/i.test(error.message || "")) {
+        const fallback = await supabase
+          .from("office_app_state")
+          .select(
+            "id, employees, menu, orders, surplus_claims, login_requests, booking_deadlines, updated_at"
+          )
+          .eq("id", 1)
+          .maybeSingle();
+        data = fallback.data;
+        error = fallback.error;
+      }
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("Could not load Supabase state:", error);
+        setCloudStatus("error");
+        setCloudReady(true);
+        return;
+      }
+
+      skipNextCloudSyncRef.current = true;
+
+      if (!data) {
+        const initialState = {
+          id: 1,
+          employees,
+          menu,
+          orders,
+          surplus_claims: surplusClaims,
+          login_requests: loginRequests,
+          edit_requests: editRequests,
+          booking_deadlines: bookingDeadlines,
+          updated_at: new Date().toISOString(),
+        };
+
+        let { error: seedError } = await supabase
+          .from("office_app_state")
+          .insert(initialState);
+
+        if (seedError && /edit_requests|column/i.test(seedError.message || "")) {
+          const fallback = { ...initialState };
+          delete fallback.edit_requests;
+          ({ error: seedError } = await supabase
+            .from("office_app_state")
+            .insert(fallback));
+        }
+
+        if (seedError) {
+          console.error("Could not seed Supabase state:", seedError);
+          setCloudStatus("error");
+        } else {
+          setCloudStatus("online");
+        }
+      } else {
+        if (Array.isArray(data.employees)) {
+          setEmployees(normalizeStoredEmployees(data.employees));
+        }
+        if (data.menu && typeof data.menu === "object") {
+          setMenu(data.menu);
+        }
+        if (data.orders && typeof data.orders === "object") {
+          setOrders(data.orders);
+        }
+        if (data.surplus_claims && typeof data.surplus_claims === "object") {
+          setSurplusClaims(data.surplus_claims);
+        }
+        if (Array.isArray(data.login_requests)) {
+          setLoginRequests(data.login_requests);
+        }
+        if (Array.isArray(data.edit_requests)) {
+          setEditRequests(data.edit_requests);
+        }
+        if (data.booking_deadlines && typeof data.booking_deadlines === "object") {
+          setBookingDeadlines(data.booking_deadlines);
+        }
+        setCloudStatus("online");
+      }
+
+      setCloudReady(true);
+    };
+    void loadCloud();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    const channel = supabase
+      .channel("office-app-state-sync")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "office_app_state",
+          filter: "id=eq.1",
+        },
+        (payload) => {
+          const data = payload.new;
+
+          if (!data) return;
+
+          // Snapshot came from Supabase.
+          skipNextCloudSyncRef.current = true;
+
+          if (Array.isArray(data.employees)) {
+            setEmployees(
+              normalizeStoredEmployees(data.employees)
+            );
+          }
+
+          if (
+            data.menu &&
+            typeof data.menu === "object"
+          ) {
+            setMenu(data.menu);
+          }
+
+          if (
+            data.orders &&
+            typeof data.orders === "object"
+          ) {
+            setOrders(data.orders);
+          }
+
+          if (
+            data.surplus_claims &&
+            typeof data.surplus_claims === "object"
+          ) {
+            setSurplusClaims(data.surplus_claims);
+          }
+
+          if (Array.isArray(data.login_requests)) {
+            setLoginRequests(data.login_requests);
+          }
+
+          if (Array.isArray(data.edit_requests)) {
+            setEditRequests(data.edit_requests);
+          }
+          if (data.booking_deadlines && typeof data.booking_deadlines === "object") {
+            setBookingDeadlines(data.booking_deadlines);
+          }
+
+          setCloudStatus("online");
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+
+    if (theme === "dark") {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((previous) =>
+      previous === "dark" ? "light" : "dark"
+    );
+  }, []);
+
+  /* ==========================================================
+   * LOGIN
+   * ========================================================== */
+
+  const login = useCallback(
+    (name, pin = "") => {
+      const normalized = normalizeName(name);
+
+      const match = employees.find(
+        (employee) =>
+          normalizeName(employee.name) === normalized
+      );
+
+      if (!match) {
+        const cleanName = String(name || "")
+          .trim()
+          .replace(/\s+/g, " ");
+
+        if (cleanName) {
+          setLoginRequests((previous) => {
+            const alreadyPending = previous.some(
+              (request) =>
+                normalizeName(request.name) === normalized
+            );
+
+            if (alreadyPending) {
+              return previous;
+            }
+
+            return [
+              ...previous,
+              {
+                id: `${Date.now()}-${Math.random()
+                  .toString(36)
+                  .slice(2, 8)}`,
+                name: cleanName,
+                requestedAt:
+                  new Date().toLocaleString("en-GB"),
+              },
+            ];
+          });
+        }
+
+        return {
+          ok: false,
+          reason: "not_found",
+          requested: true,
+        };
+      }
+
+      if (match.isAdmin) {
+        if (
+          String(pin).trim() !==
+          String(match.adminPin || "").trim()
+        ) {
+          return {
+            ok: false,
+            reason: "invalid_pin",
+          };
+        }
+      }
+
+      setCurrentUser({
+        name: match.name,
+        role: match.role,
+        isAdmin: Boolean(match.isAdmin),
+        isOwner: Boolean(match.isOwner),
+        userType: match.userType || (match.role === "guest" ? "guest" : "employee"),
+      });
+
+      setCurrentPage(
+        match.isAdmin ? "admin" : "employee"
+      );
+
+      return {
+        ok: true,
+        isAdmin: Boolean(match.isAdmin),
+        isOwner: Boolean(match.isOwner),
+      };
+    },
+    [employees]
+  );
+
+  const navigateTo = useCallback((page) => {
+    setCurrentPage(page);
+  }, []);
+
+  const logout = useCallback(() => {
+    setCurrentUser(null);
+    setCurrentPage("login");
+  }, []);
+
+  /* ==========================================================
+   * EMPLOYEE MANAGEMENT
+   * ========================================================== */
+
+  const addEmployee = useCallback(
+    (name, isAdmin = false, adminPin = "", userType = "employee") => {
+      const cleanName = String(name || "")
+        .trim()
+        .replace(/\\s+/g, " ");
+
+      if (!cleanName) return false;
+
+      let added = false;
+      const type = userType === "guest" ? "guest" : "employee";
+
+      setEmployees((previous) => {
+        const exists = previous.some(
+          (employee) => normalizeName(employee.name) === normalizeName(cleanName)
+        );
+        if (exists) return previous;
+        added = true;
+        return [
+          ...previous,
+          {
+            name: cleanName,
+            role: isAdmin ? "admin" : type,
+            isAdmin: Boolean(isAdmin),
+            isOwner: false,
+            adminPin: isAdmin ? String(adminPin || "") : "",
+            userType: type,
+            temporaryUntil: null,
+          },
+        ];
+      });
+      return added;
+    },
+    []
+  );
+
+  const setEmployeeType = useCallback((name, userType) => {
+    const normalized = normalizeName(name);
+    if (normalized === "mohit" || !["employee", "guest"].includes(userType)) return false;
+    setEmployees((previous) => previous.map((employee) => {
+      if (normalizeName(employee.name) !== normalized || employee.isAdmin) return employee;
+      return { ...employee, userType, role: userType };
+    }));
+    return true;
+  }, []);
+
+  const removeEmployee = useCallback((name) => {
+    const normalized = normalizeName(name);
+
+    if (normalized === "mohit") {
+      return false;
+    }
+
+    setEmployees((previous) =>
+      previous.filter(
+        (employee) =>
+          normalizeName(employee.name) !== normalized
+      )
+    );
+
+    return true;
+  }, []);
+
+  const toggleAdmin = useCallback((name) => {
+    const normalized = normalizeName(name);
+
+    if (normalized === "mohit") {
+      return false;
+    }
+
+    setEmployees((previous) =>
+      previous.map((employee) => {
+        if (
+          normalizeName(employee.name) !== normalized
+        ) {
+          return employee;
+        }
+
+        const becomingAdmin = !employee.isAdmin;
+
+        return {
+          ...employee,
+          isAdmin: becomingAdmin,
+          role: becomingAdmin
+            ? "admin"
+            : (employee.userType || "employee"),
+          userType: employee.userType || "employee",
+          adminPin: becomingAdmin
+            ? employee.adminPin || ""
+            : "",
+        };
+      })
+    );
+
+    return true;
+  }, []);
+
+  const setAdminPin = useCallback(
+    (name, pin) => {
+      const normalized = normalizeName(name);
+
+      if (!pin || String(pin).length < 4) {
+        return false;
+      }
+
+      setEmployees((previous) =>
+        previous.map((employee) => {
+          if (
+            normalizeName(employee.name) !==
+            normalized
+          ) {
+            return employee;
+          }
+
+          return {
+            ...employee,
+            isAdmin: true,
+            role: employee.isOwner
+              ? "owner"
+              : "admin",
+            adminPin: String(pin),
+          };
+        })
+      );
+
+      return true;
+    },
+    []
+  );
+
+  /* ==========================================================
+   * ACCESS REQUESTS
+   * ========================================================== */
+
+  const approveAccessRequest = useCallback(
+    (requestId, temporary = false) => {
+      const request = loginRequests.find(
+        (item) => item.id === requestId
+      );
+
+      if (!request) {
+        return false;
+      }
+
+      const cleanName = request.name;
+
+      setEmployees((previous) => {
+        const exists = previous.some(
+          (employee) =>
+            normalizeName(employee.name) ===
+            normalizeName(cleanName)
+        );
+
+        if (exists) {
+          return previous;
+        }
+
+        return [
+          ...previous,
+          {
+            name: cleanName,
+            role: "employee",
+            isAdmin: false,
+            isOwner: false,
+            adminPin: "",
+            temporaryUntil: temporary
+              ? todayDateKey()
+              : null,
+          },
+        ];
+      });
+
+      setLoginRequests((previous) =>
+        previous.filter(
+          (item) => item.id !== requestId
+        )
+      );
+
+      return true;
+    },
+    [loginRequests]
+  );
+
+  const dismissAccessRequest = useCallback(
+    (requestId) => {
+      setLoginRequests((previous) =>
+        previous.filter(
+          (item) => item.id !== requestId
+        )
+      );
+    },
+    []
+  );
+
+  /* ==========================================================
+   * BOOKING DEADLINE
+   * ========================================================== */
+
+  const DEFAULT_BOOKING_DEADLINE = "11:30";
+
+  const getBookingDeadline = useCallback(
+    (dateKey = todayDateKey()) => {
+      const value = bookingDeadlines?.[dateKey];
+      return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ""))
+        ? value
+        : DEFAULT_BOOKING_DEADLINE;
+    },
+    [bookingDeadlines]
+  );
+
+  const setBookingDeadline = useCallback(
+    async (time, dateKey = todayDateKey()) => {
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(time || ""))) {
+        return false;
+      }
+
+      const next = {
+        ...bookingDeadlines,
+        [dateKey]: String(time),
+      };
+      setBookingDeadlines(next);
+      saveLS(LS_KEYS.bookingDeadlines, next);
+
+      if (isSupabaseConfigured && cloudReady) {
+        const { error } = await supabase.rpc("set_booking_deadline", {
+          p_date_key: dateKey,
+          p_time: String(time),
+        });
+
+        if (error) {
+          console.error("Could not save booking deadline:", error);
+          setCloudStatus("error");
+          return false;
+        }
+
+        setCloudStatus("online");
+      }
+
+      return true;
+    },
+    [bookingDeadlines, cloudReady]
+  );
+
+  const resetBookingDeadline = useCallback(
+    async (dateKey = todayDateKey()) => {
+      const next = { ...bookingDeadlines };
+      delete next[dateKey];
+      setBookingDeadlines(next);
+      saveLS(LS_KEYS.bookingDeadlines, next);
+
+      if (isSupabaseConfigured && cloudReady) {
+        const { error } = await supabase.rpc("reset_booking_deadline", {
+          p_date_key: dateKey,
+        });
+
+        if (error) {
+          console.error("Could not reset booking deadline:", error);
+          setCloudStatus("error");
+          return false;
+        }
+
+        setCloudStatus("online");
+      }
+      return true;
+    },
+    [bookingDeadlines, cloudReady]
+  );
+
+  /* ==========================================================
+   * MENU
+   * ========================================================== */
+
+  const updateMenuDay = useCallback(
+    (day, updatedDay) => {
+      setMenu((previous) => ({
+        ...previous,
+        [day]: updatedDay,
+      }));
+    },
+    []
+  );
+
+  /* ==========================================================
+   * ORDERS
+   * ========================================================== */
+
+  /*
+   * IMPORTANT CONCURRENCY FIX
+   *
+   * Orders are no longer saved through the generic
+   * office_app_state UPDATE.
+   *
+   * When Supabase is configured, this function calls the
+   * PostgreSQL function:
+   *
+   *   upsert_lunch_order()
+   *
+   * That function locks the shared row and updates only
+   * the submitting employee's order.
+   *
+   * This prevents:
+   *
+   * Employee A submits
+   *       +
+   * Employee B has an older snapshot
+   *       ↓
+   * Employee B overwrites Employee A
+   *
+   * from happening.
+   */
+  const submitOrder = useCallback(
+    async (employeeName, order, options = {}) => {
+      const dateKey = options.dateKey || todayDateKey();
+      const nextOrder = {
+        ...order,
+        employeeName,
+        submittedAt: new Date().toLocaleTimeString("en-GB"),
+        approved: options.approved === true,
+        outOfTime: options.outOfTime === true,
+      };
+
+      if (isSupabaseConfigured) {
+        if (!cloudReady) {
+          setCloudStatus("connecting");
+          return false;
+        }
+
+        // Preferred path: atomic PostgreSQL RPC.
+        const { data, error } = await supabase.rpc(
+          "upsert_lunch_order",
+          {
+            p_date_key: dateKey,
+            p_employee_name: employeeName,
+            p_order: nextOrder,
+          }
+        );
+
+        if (!error && data && typeof data === "object") {
+          // Verify the RPC actually returned this order. If not, do not show
+          // a fake success; use the direct compatibility path below.
+          const saved = data?.[dateKey]?.[employeeName];
+          if (saved) {
+            setOrders(data);
+            setCloudStatus("online");
+            return true;
+          }
+        }
+
+        if (error) {
+          console.error("Atomic order save failed:", error);
+        } else {
+          console.error("Order RPC returned no saved order", data);
+        }
+
+        // Compatibility/recovery path. This keeps the existing prototype
+        // working even if the RPC was not created in the current Supabase
+        // project or the shared row needs to be initialized.
+        const { data: current, error: readError } = await supabase
+          .from("office_app_state")
+          .select("id, orders")
+          .eq("id", 1)
+          .maybeSingle();
+
+        if (readError) {
+          console.error("Could not read shared order state:", readError);
+          setCloudStatus("error");
+          return false;
+        }
+
+        const nextOrders = {
+          ...(current?.orders || {}),
+          [dateKey]: {
+            ...(current?.orders?.[dateKey] || {}),
+            [employeeName]: nextOrder,
+          },
+        };
+
+        let saveResult;
+        if (current) {
+          saveResult = await supabase
+            .from("office_app_state")
+            .update({
+              orders: nextOrders,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", 1);
+        } else {
+          saveResult = await supabase
+            .from("office_app_state")
+            .insert({
+              id: 1,
+              employees,
+              menu,
+              orders: nextOrders,
+              surplus_claims: surplusClaims,
+              login_requests: loginRequests,
+              edit_requests: editRequests,
+              updated_at: new Date().toISOString(),
+            });
+
+          if (saveResult.error && /edit_requests|column/i.test(saveResult.error.message || "")) {
+            saveResult = await supabase
+              .from("office_app_state")
+              .insert({
+                id: 1,
+                employees,
+                menu,
+                orders: nextOrders,
+                surplus_claims: surplusClaims,
+                login_requests: loginRequests,
+                updated_at: new Date().toISOString(),
+              });
+          }
+        }
+
+        if (saveResult.error) {
+          console.error("Direct order save failed:", saveResult.error);
+          setCloudStatus("error");
+          return false;
+        }
+
+        setOrders(nextOrders);
+        setCloudStatus("online");
+        return true;
+      }
+
+      setOrders((previous) => ({
+        ...previous,
+        [dateKey]: {
+          ...(previous[dateKey] || {}),
+          [employeeName]: nextOrder,
+        },
+      }));
+      return true;
+    },
+    [cloudReady, employees, menu, surplusClaims, loginRequests, editRequests]
+  );
+
+  const approveAllToday = useCallback(async () => {
+    const dateKey = todayDateKey();
+
+    if (isSupabaseConfigured) {
+      if (!cloudReady) return false;
+
+      const { data, error } = await supabase.rpc(
+        "approve_all_orders",
+        { p_date_key: dateKey }
+      );
+
+      if (!error && data && typeof data === "object") {
+        setOrders(data);
+        setCloudStatus("online");
+        return true;
+      }
+
+      console.error("Approve-all RPC failed:", error);
+    }
+
+    setOrders((previous) => {
+      const todays = previous[dateKey] || {};
+      return {
+        ...previous,
+        [dateKey]: Object.fromEntries(
+          Object.entries(todays).map(([name, order]) => [
+            name,
+            { ...order, approved: true, outOfTime: false },
+          ])
+        ),
+      };
+    });
+    return true;
+  }, [cloudReady]);
+
+  const approveOutOfTimeOrder = useCallback(async (employeeName) => {
+    const dateKey = todayDateKey();
+
+    const updateLocal = (previous) => {
+      const todays = previous[dateKey] || {};
+      const order = todays[employeeName];
+      if (!order) return previous;
+      return {
+        ...previous,
+        [dateKey]: {
+          ...todays,
+          [employeeName]: {
+            ...order,
+            approved: true,
+            outOfTime: false,
+            approvedAt: new Date().toISOString(),
+          },
+        },
+      };
+    };
+
+    if (isSupabaseConfigured && cloudReady) {
+      const current = await supabase
+        .from("office_app_state")
+        .select("orders")
+        .eq("id", 1)
+        .maybeSingle();
+
+      if (current.error) {
+        console.error("Could not read orders for late approval:", current.error);
+        return false;
+      }
+
+      const nextOrders = updateLocal({ [dateKey]: current.data?.orders?.[dateKey] || {} })[dateKey];
+      const { error } = await supabase
+        .from("office_app_state")
+        .update({
+          orders: {
+            ...(current.data?.orders || {}),
+            [dateKey]: nextOrders,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", 1);
+
+      if (error) {
+        console.error("Could not approve out-of-time order:", error);
+        setCloudStatus("error");
+        return false;
+      }
+
+      setOrders((previous) => updateLocal(previous));
+      setCloudStatus("online");
+      return true;
+    }
+
+    setOrders((previous) => updateLocal(previous));
+    return true;
+  }, [cloudReady]);
+
+  const deleteTodayOrder = useCallback(async (employeeName) => {
+    const dateKey = todayDateKey();
+
+    if (isSupabaseConfigured && cloudReady) {
+      const { data, error } = await supabase.rpc(
+        "delete_lunch_order",
+        {
+          p_date_key: dateKey,
+          p_employee_name: employeeName,
+        }
+      );
+
+      if (!error && data && typeof data === "object") {
+        setOrders(data);
+        setCloudStatus("online");
+        return true;
+      }
+
+      console.error("Delete-order RPC failed:", error);
+      return false;
+    }
+
+    setOrders((previous) => {
+      const nextDay = { ...(previous[dateKey] || {}) };
+      delete nextDay[employeeName];
+      return { ...previous, [dateKey]: nextDay };
+    });
+    return true;
+  }, [cloudReady]);
+
+  const clearTodayData = useCallback(async () => {
+    const dateKey = todayDateKey();
+
+    if (isSupabaseConfigured && cloudReady) {
+      const { data, error } = await supabase.rpc(
+        "clear_today_orders",
+        { p_date_key: dateKey }
+      );
+
+      if (!error && data && typeof data === "object") {
+        setOrders(data);
+        setSurplusClaims((previous) => {
+          const next = { ...previous };
+          delete next[dateKey];
+          return next;
+        });
+        setEditRequests((previous) =>
+          previous.filter((request) => request.dateKey !== dateKey)
+        );
+        setCloudStatus("online");
+        return true;
+      }
+
+      console.error("Clear-today RPC failed:", error);
+      return false;
+    }
+
+    setOrders((previous) => {
+      const next = { ...previous };
+      delete next[dateKey];
+      return next;
+    });
+    setSurplusClaims((previous) => {
+      const next = { ...previous };
+      delete next[dateKey];
+      return next;
+    });
+    setEditRequests((previous) =>
+      previous.filter((request) => request.dateKey !== dateKey)
+    );
+    return true;
+  }, [cloudReady]);
+  /* ==========================================================
+   * EDIT REQUESTS
+   * ========================================================== */
+
+  const requestEdit = useCallback(
+    (
+      employeeName,
+      originalOrder,
+      editedOrder
+    ) => {
+      const dateKey = todayDateKey();
+
+      const existingPending =
+        editRequests.some(
+          (request) =>
+            request.dateKey === dateKey &&
+            request.employeeName ===
+              employeeName &&
+            request.status === "pending"
+        );
+
+      if (existingPending) {
+        return false;
+      }
+
+      setEditRequests((previous) => [
+        ...previous,
+        {
+          id: `${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`,
+          dateKey,
+          employeeName,
+          originalOrder,
+          editedOrder,
+          requestedAt:
+            new Date().toLocaleString("en-GB"),
+          status: "pending",
+        },
+      ]);
+
+      return true;
+    },
+    [editRequests]
+  );
+
+  const approveEditRequest = useCallback(
+  async (requestId) => {
+    const request = editRequests.find(
+      (item) => item.id === requestId
+    );
+
+    if (!request || request.status !== "pending") {
+      return false;
+    }
+
+    // Do not approve a request if its original order no longer exists.
+    const currentOrder =
+      orders[request.dateKey]?.[request.employeeName];
+
+    if (!currentOrder) {
+      console.error(
+        "Cannot approve edit: the original order was not found.",
+        {
+          dateKey: request.dateKey,
+          employeeName: request.employeeName,
+        }
+      );
+      return false;
+    }
+
+    const editApprovedAt = new Date().toLocaleString("en-GB");
+
+    // Save the revised order through the existing order-saving mechanism.
+    // This uses the atomic Supabase RPC when configured.
+    const saved = await submitOrder(
+      request.employeeName,
+      {
+        ...request.editedOrder,
+        editApprovedAt,
+      },
+      {
+        approved: false,
+        outOfTime: false,
+        dateKey: request.dateKey,
+      }
+    );
+
+    // Never mark the request approved if saving the revised order failed.
+    if (!saved) {
+      console.error(
+        "Could not save the edited order. The request remains pending."
+      );
+      return false;
+    }
+
+    setEditRequests((previous) =>
+      previous.map((item) =>
+        item.id === requestId && item.status === "pending"
+          ? {
+              ...item,
+              status: "approved",
+              reviewedAt: new Date().toLocaleString("en-GB"),
+            }
+          : item
+      )
+    );
+
+    return true;
+  },
+  [editRequests, orders, submitOrder]
+);
+
+  const rejectEditRequest = useCallback(
+    (requestId) => {
+      const exists = editRequests.some(
+        (item) =>
+          item.id === requestId &&
+          item.status === "pending"
+      );
+
+      if (!exists) {
+        return false;
+      }
+
+      setEditRequests((previous) =>
+        previous.map((item) =>
+          item.id === requestId
+            ? {
+                ...item,
+                status: "rejected",
+                reviewedAt:
+                  new Date().toLocaleString(
+                    "en-GB"
+                  ),
+              }
+            : item
+        )
+      );
+
+      return true;
+    },
+    [editRequests]
+  );
+
+  /*
+   * IMPORTANT:
+   *
+   * Admin/Owner edits do NOT require approval.
+   *
+   * This function removes any stale edit request that may
+   * have been created for the Admin/Owner in an older
+   * version of the application.
+   */
+  const clearEditRequestsForEmployee =
+    useCallback((employeeName) => {
+      const normalized =
+        normalizeName(employeeName);
+
+      if (!normalized) {
+        return false;
+      }
+
+      setEditRequests((previous) =>
+        previous.filter(
+          (request) =>
+            normalizeName(
+              request.employeeName
+            ) !== normalized
+        )
+      );
+
+      return true;
+    }, []);
+
+  const todaysOrders =
+    orders[todayDateKey()] || {};
+
+  /* ==========================================================
+   * FOOD LIMITS
+   * ========================================================== */
+
+  const standards = useMemo(() => {
+    const today =
+      menu[todayWeekday()];
+
+    return {
+      bowl1: 1,
+      bowl2: 1,
+      bread:
+        Number(today?.bread?.baseQty) ||
+        4,
+      rice: 1,
+      extra: 1,
+      salad: 1,
+    };
+  }, [menu]);
+
+  /* ==========================================================
+   * TOTAL SURPLUS
+   * ========================================================== */
+
+  const totalSurplus = useMemo(() => {
+    const result = {
+      bowl1: 0,
+      bowl2: 0,
+      bread: 0,
+      rice: 0,
+      extra: 0,
+      salad: 0,
+    };
+
+    Object.values(todaysOrders).forEach(
+      (order) => {
+        Object.keys(result).forEach(
+          (key) => {
+            const standard =
+              Number(
+                standards[key] || 0
+              );
+
+            const ordered =
+              Number(
+                order?.[key]?.qty || 0
+              );
+
+            result[key] += Math.max(
+              0,
+              standard - ordered
+            );
+          }
+        );
+      }
+    );
+
+    return result;
+  }, [
+    todaysOrders,
+    standards,
+  ]);
+
+  /* ==========================================================
+   * REMAINING SURPLUS
+   * ========================================================== */
+
+  const surplusAvailability = useMemo(() => {
+    const dateKey =
+      todayDateKey();
+
+    const claimsForToday =
+      surplusClaims[dateKey] || {};
+
+    const claimedTotals = {
+      bowl1: 0,
+      bowl2: 0,
+      bread: 0,
+      rice: 0,
+      extra: 0,
+      salad: 0,
+    };
+
+    Object.values(
+      claimsForToday
+    ).forEach(
+      (employeeClaims) => {
+        if (
+          employeeClaims &&
+          typeof employeeClaims ===
+            "object"
+        ) {
+          Object.keys(
+            claimedTotals
+          ).forEach((key) => {
+            claimedTotals[key] +=
+              Number(
+                employeeClaims[key] ||
+                  0
+              );
+          });
+        }
+      }
+    );
+
+    // Legacy flat format support.
+    Object.keys(
+      claimedTotals
+    ).forEach((key) => {
+      if (
+        typeof claimsForToday[key] ===
+        "number"
+      ) {
+        claimedTotals[key] +=
+          Number(
+            claimsForToday[key] || 0
+          );
+      }
+    });
+
+    return Object.fromEntries(
+      Object.keys(
+        totalSurplus
+      ).map((key) => [
+        key,
+        Math.max(
+          0,
+          Number(
+            totalSurplus[key] || 0
+          ) -
+            Number(
+              claimedTotals[key] || 0
+            )
+        ),
+      ])
+    );
+  }, [
+    totalSurplus,
+    surplusClaims,
+  ]);
+
+  /* ==========================================================
+   * CLAIM SURPLUS
+   * ========================================================== */
+
+  const claimSurplus = useCallback(
+    (employeeName, key) => {
+      const dateKey =
+        todayDateKey();
+
+      const available =
+        Number(
+          surplusAvailability[key] ||
+            0
+        );
+
+      if (
+        !employeeName ||
+        available <= 0
+      ) {
+        return false;
+      }
+
+      setSurplusClaims(
+        (previous) => {
+          const previousToday =
+            previous[dateKey] || {};
+
+          const todayClaims = {
+            ...previousToday,
+          };
+
+          const employeeClaims = {
+            ...(todayClaims[
+              employeeName
+            ] || {}),
+          };
+
+          employeeClaims[key] =
+            Number(
+              employeeClaims[key] ||
+                0
+            ) + 1;
+
+          todayClaims[
+            employeeName
+          ] = employeeClaims;
+
+          return {
+            ...previous,
+            [dateKey]:
+              todayClaims,
+          };
+        }
+      );
+
+      return true;
+    },
+    [surplusAvailability]
+  );
+
+  /* ==========================================================
+   * RELEASE SURPLUS
+   * ========================================================== */
+
+  const releaseSurplus =
+    useCallback(
+      (employeeName, key) => {
+        const dateKey =
+          todayDateKey();
+
+        setSurplusClaims(
+          (previous) => {
+            const previousToday =
+              previous[dateKey] || {};
+
+            const employeeClaims = {
+              ...(previousToday[
+                employeeName
+              ] || {}),
+            };
+
+            const current =
+              Number(
+                employeeClaims[key] ||
+                  0
+              );
+
+            if (current <= 0) {
+              return previous;
+            }
+
+            if (current === 1) {
+              delete employeeClaims[
+                key
+              ];
+            } else {
+              employeeClaims[key] =
+                current - 1;
+            }
+
+            const todayClaims = {
+              ...previousToday,
+            };
+
+            if (
+              Object.keys(
+                employeeClaims
+              ).length === 0
+            ) {
+              delete todayClaims[
+                employeeName
+              ];
+            } else {
+              todayClaims[
+                employeeName
+              ] = employeeClaims;
+            }
+
+            return {
+              ...previous,
+              [dateKey]:
+                todayClaims,
+            };
+          }
+        );
+
+        return true;
+      },
+      []
+    );
+
+  /* ==========================================================
+   * CROSS-TAB SYNC
+   * ========================================================== */
+
+  useEffect(() => {
+    const handleStorage = (
+      event
+    ) => {
+      if (
+        event.key ===
+        LS_KEYS.orders
+      ) {
+        setOrders(
+          loadLS(
+            LS_KEYS.orders,
+            {}
+          )
+        );
+      }
+
+      if (
+        event.key ===
+        LS_KEYS.surplusClaims
+      ) {
+        setSurplusClaims(
+          loadLS(
+            LS_KEYS.surplusClaims,
+            {}
+          )
+        );
+      }
+
+      if (
+        event.key ===
+        LS_KEYS.menu
+      ) {
+        setMenu(
+          loadLS(
+            LS_KEYS.menu,
+            DEFAULT_MENU
+          )
+        );
+      }
+
+      if (
+        event.key ===
+        LS_KEYS.employees
+      ) {
+        setEmployees(
+          normalizeStoredEmployees(
+            loadLS(
+              LS_KEYS.employees,
+              null
+            )
+          )
+        );
+      }
+
+      if (
+        event.key ===
+        LS_KEYS.loginRequests
+      ) {
+        setLoginRequests(
+          loadLS(
+            LS_KEYS.loginRequests,
+            []
+          )
+        );
+      }
+
+      if (
+        event.key ===
+        LS_KEYS.editRequests
+      ) {
+        setEditRequests(
+          loadLS(
+            LS_KEYS.editRequests,
+            []
+          )
+        );
+      }
+    };
+
+    window.addEventListener(
+      "storage",
+      handleStorage
+    );
+
+    return () => {
+      window.removeEventListener(
+        "storage",
+        handleStorage
+      );
+    };
+  }, []);
+
+  /* ==========================================================
+   * CONTEXT VALUE
+   * ========================================================== */
+
+  const value = {
+    employees,
+    menu,
+    orders,
+    todaysOrders,
+    theme,
+    currentUser,
+    currentPage,
+    standards,
+    surplusAvailability,
+    loginRequests,
+    editRequests,
+    bookingDeadlines,
+    getBookingDeadline,
+    setBookingDeadline,
+    resetBookingDeadline,
+
+    toggleTheme,
+    login,
+    logout,
+    navigateTo,
+
+    addEmployee,
+    removeEmployee,
+    toggleAdmin,
+    setEmployeeType,
+    setAdminPin,
+
+    approveAccessRequest,
+    dismissAccessRequest,
+
+    updateMenuDay,
+
+    submitOrder,
+
+    requestEdit,
+    approveEditRequest,
+    rejectEditRequest,
+
+    // IMPORTANT:
+    // Required by EmployeePortal for direct Admin/Owner edits.
+    clearEditRequestsForEmployee,
+
+    approveAllToday,
+    approveOutOfTimeOrder,
+    deleteTodayOrder,
+    clearTodayData,
+
+    claimSurplus,
+    releaseSurplus,
+
+    cloudStatus,
+  };
+
+  return (
+    <AppContext.Provider value={value}>
+      {children}
+    </AppContext.Provider>
+  );
+}
+
+export function useApp() {
+  const context =
+    useContext(AppContext);
+
+  if (!context) {
+    throw new Error(
+      "useApp must be used within AppProvider"
+    );
+  }
+
+  return context;
+}
