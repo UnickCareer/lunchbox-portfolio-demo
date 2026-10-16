@@ -1,805 +1,476 @@
 # 🍱 LunchBox Panipat — Office Lunch Ordering System
 
-A modern, responsive **office lunch ordering web application** built for **Sparsh CCTV, Panipat**.
+A modern, responsive office lunch-ordering application built with **React, Vite, and Supabase** for managing daily employee lunch orders. Employees can select their lunch, claim available surplus food, and request edits. Admins and the Owner can manage menus, employees, approvals, and send a consolidated lunch summary to the food owner through WhatsApp.
 
-Employees can log in, customize their daily thali, use available surplus food, submit their lunch order, and request order edits. Admin/Owner users can manage employees, menus, approvals, access requests, and send the final approved lunch summary to the food owner through WhatsApp.
+> **Portfolio demo:** This repository is intended to demonstrate the LunchBox workflow. Use fictional/demo data only in a public deployment. Do not add real employee information, private credentials, or production database keys to the repository.
 
 ---
 
-## ✨ Project Highlights
+## ✨ Highlights
 
-- 👨‍💼 Employee lunch ordering portal
-- 🛡️ Admin / HR dashboard
-- 👑 Owner access
-- 🍛 Daily thali menu
-- ➕ Quantity selection with normal food limits
-- 🔄 Same vegetable in both bowls
-- ♻️ Shared surplus-food system
+- 👨‍💼 Employee lunch-ordering portal
+- 🛡️ Admin dashboard and 👑 Owner access
+- 🍛 Configurable weekday thali menu
+- ➕ Food quantity controls and normal serving limits
+- 🥣 Same-vegetable-in-both-bowls option
+- ♻️ Shared surplus-food availability and claims
 - 📝 Employee order-edit requests
-- ✅ Admin approval / rejection workflow
-- 📱 Responsive mobile-friendly UI
-- 🌙 Light / dark mode
-- ✨ Framer Motion animations
-- 📊 Today's lunch summary
-- 📲 WhatsApp order sending
-- 🔒 Anonymous P1, P2, P3... formatting in WhatsApp
-- 🗃️ Supabase shared database and synchronization
-- 🚀 Vercel deployment
-- 🌐 QR-code based access for office phones
-- 🔖 Custom emerald + golden lunch/thali favicon
+- ✅ Admin approval/rejection workflow for edit requests
+- ⏰ **Booking deadline support** to control when employees can submit lunch bookings
+- 📊 Daily lunch summary and order approval status
+- 📲 WhatsApp order summary with anonymous `P1`, `P2`, `P3` labels
+- 👥 Employee management and access requests
+- 🌙 Light/dark mode, responsive layout, and Framer Motion animations
+- 🔗 QR-code access for mobile devices
+- 🗃️ Supabase shared data and synchronization
+- 🚀 Vercel deployment support
+- 🔖 Custom emerald-and-gold lunch/thali favicon
 
 ---
 
-## 🧭 Project Flow
+## ⏰ Booking Deadline
 
-**Employee / Admin opens website**
+The booking deadline feature helps the office collect lunch requirements within a defined time window. It gives the lunch workflow a clear cut-off instead of leaving booking open indefinitely.
 
-↓
+### Why it matters
 
-**Login**
+- **Clear cut-off:** Employees know when they need to submit their lunch booking.
+- **More predictable preparation:** Admins can collect the day's requirements before the food order is finalized.
+- **Better daily coordination:** The deadline supports a consistent process for employees, Admin/Owner, and the food owner.
+- **Centralized workflow:** Booking is part of the lunch-ordering application rather than a separate manual reminder.
 
-↓
-
-**Employee**
-→ View today's menu  
-→ Select food quantities  
-→ Use surplus food if available  
-→ Submit lunch order  
-→ Edit submitted order if required  
-
-**OR**
-
-**Admin / Owner**
-→ Open Admin Dashboard  
-→ View today's orders  
-→ Manage employees  
-→ Manage access requests  
-→ Manage menu  
-→ Approve orders  
-→ Book own lunch  
-→ Send approved order to food owner on WhatsApp
-
-↓
-
-**Supabase**
-
-Stores and synchronizes shared application data.
-
-↓
-
-**Vercel**
-
-Hosts the production application.
+The deadline behavior and configured time should be verified in the deployed demo before relying on it for real operations. Admin/Owner booking behavior may differ from regular employee booking depending on the application's current configuration.
 
 ---
 
-# 🛠️ Tech Stack
+## 🧭 How It Works
+
+1. **Open the app and log in.**
+2. **Employee:** review the day's menu, choose quantities, use available surplus, and submit a lunch booking before the applicable deadline.
+3. **Edit request:** if a submitted order needs a change, the employee can request an edit for Admin review.
+4. **Admin/Owner:** review the day's orders, manage employees and menu settings, process requests, and approve orders.
+5. **Send the lunch summary:** the app prepares a compact WhatsApp message for the food owner.
+6. **Shared data:** Supabase synchronizes application state across supported devices.
+
+```text
+Employee / Admin / Owner
+          |
+          v
+      LunchBox UI
+          |
+          +--> Menu and booking deadline
+          +--> Lunch orders and surplus
+          +--> Edit requests and approvals
+          |
+          v
+       Supabase
+          |
+          v
+ Admin reviews approved orders
+          |
+          v
+ WhatsApp lunch summary
+          |
+          v
+      Food owner
+```
+
+---
+
+## 🛠️ Tech Stack
 
 | Technology | Purpose |
 |---|---|
-| ⚛️ React | Frontend UI |
-| ⚡ Vite | Development server and build tool |
-| 🎨 Tailwind CSS | Styling and responsive design |
-| 🎞️ Framer Motion | Animations and transitions |
-| 🧩 Lucide React | Icons |
-| 🗃️ Supabase | Shared database and synchronization |
-| ☁️ Vercel | Production hosting |
-| 📱 WhatsApp | Food-owner order communication |
-| 🔗 QR Code | Quick mobile access |
-| 🐙 GitHub | Source-code repository |
+| React | Component-based user interface |
+| Vite | Development server and production build |
+| Tailwind CSS | Styling and responsive layouts |
+| Framer Motion | UI animations and transitions |
+| Lucide React | Icons |
+| Supabase | Shared application data and synchronization |
+| Vercel | Hosting and deployment |
+| WhatsApp deep links | Sending the prepared lunch summary |
+| GitHub | Source control and collaboration |
 
 ---
 
-# 📁 Main Project Structure
+## 📁 Project Structure
 
-The important project structure is:
+The main application code is organized approximately as follows:
 
-    src/
-    ├── components/
-    │   ├── admin/
-    │   ├── Cart.jsx
-    │   ├── ItemCard.jsx
-    │   ├── SurplusPanel.jsx
-    │   ├── ThemeToggle.jsx
-    │   ├── ThaliRing.jsx
-    │   └── Toast.jsx
-    │
-    ├── context/
-    │   └── AppContext.jsx
-    │
-    ├── pages/
-    │   ├── AdminDashboard.jsx
-    │   ├── EmployeePortal.jsx
-    │   └── Login.jsx
-    │
-    ├── App.jsx
-    └── main.jsx
+```text
+lunchbox-portfolio-demo/
+├── src/
+│   ├── components/
+│   │   ├── admin/
+│   │   ├── Cart.jsx
+│   │   ├── ItemCard.jsx
+│   │   ├── SurplusPanel.jsx
+│   │   ├── ThemeToggle.jsx
+│   │   ├── ThaliRing.jsx
+│   │   └── Toast.jsx
+│   ├── context/
+│   │   └── AppContext.jsx
+│   ├── pages/
+│   │   ├── AdminDashboard.jsx
+│   │   ├── EmployeePortal.jsx
+│   │   └── Login.jsx
+│   ├── App.jsx
+│   └── main.jsx
+├── supabase/
+│   └── schema.sql
+├── .env.example
+├── index.html
+├── package.json
+├── vite.config.js
+└── README.md
+```
 
-Additional project files include:
-
-    package.json
-    vite.config.js
-    tailwind.config.js
-    index.html
-    .env
-    .env.example
-    README.md
+The exact file layout may evolve as the project is updated.
 
 ---
 
-# 👤 Login System
+## 👤 Login and Access Workflow
 
-The application uses an approved employee-name based login system.
-
-Employees do not need a password for the current office workflow.
-
-Approved employees can enter their name and access the employee portal.
-
-The Owner/Admin account can access the Admin Dashboard.
+The current application uses an employee-name-based login workflow for its intended demo/office flow. Approved employees can enter the employee portal, while Admin/Owner users can access management features.
 
 ### Unknown employee
 
-If someone enters a name that is not currently approved:
+1. An unrecognized name is not automatically granted approved access.
+2. The person can submit an access request if that option is available in the current build.
+3. Admin reviews the request.
+4. Admin decides whether to approve or reject access.
 
-1. Login is rejected.
-2. The employee is informed that access is not approved.
-3. An access request can be sent to Admin.
-4. Admin can review the request.
-5. Admin can decide whether to add the employee temporarily or permanently.
+**Security note:** A name-based login is not strong identity verification. Do not use it as the sole protection for sensitive production data.
 
 ---
 
-# 🍛 Employee Lunch Ordering Flow
+## 🍛 Employee Lunch Ordering
 
-After login, the employee sees today's available thali.
-
-The employee can select quantities for:
+Employees can select from the menu configured for the day, including items such as:
 
 - 🥣 Veg Bowl 1
 - 🌶️ Veg Bowl 2
 - 🫓 Roti
 - 🍚 Rice
-- 🍮 Extra item such as Kheer/Dessert
+- 🍮 Extra item or dessert
 - 🥗 Salad
 
-The interface also displays an animated thali/ring summary.
+The interface displays a thali summary and applies the quantity limits configured by the application/menu. Roti is presented to users as **Roti**, even if an internal category uses another name.
 
-Typical normal limits include:
+### Same vegetable in both bowls
 
-- Veg Bowl 1 → 1
-- Veg Bowl 2 → 1
-- Roti → 4
-- Rice → 1
-- Extra → 1
-- Salad → 1
-
-The exact Roti quantity can be controlled through the menu configuration.
+Employees can select the same vegetable for both bowls and choose the supported dry-sabzi or gravy-sabzi option. This is treated as a special lunch requirement where applicable.
 
 ---
 
-# 🔄 Same Vegetable in Both Bowls
+## ♻️ Surplus Food
 
-Employees can enable:
+The surplus-food workflow allows an unused portion to be made available for another employee to claim.
 
-**Same vegetable in both bowls**
+**Example:**
 
-They can then choose whether to double:
+1. The normal allowance includes one portion of Mix Veg.
+2. An employee chooses not to take it.
+3. That unused portion becomes available as surplus.
+4. Another employee claims the available portion.
+5. The available surplus count decreases; if the claim is released, the portion can become available again.
 
-- Dry Sabzi
-- Gravy Sabzi
-
-This is treated as a special lunch requirement because the normal two-bowl combination has been changed.
-
----
-
-# ♻️ Surplus Food System
-
-The surplus system allows unused food portions to be offered to other employees.
-
-### Example
-
-Suppose the normal allowance is:
-
-    Mix Veg = 1
-
-An employee chooses:
-
-    Mix Veg = 0
-
-The unused portion becomes:
-
-    1 surplus Mix Veg available
-
-Another employee can then claim it.
-
-For example:
-
-    Normal Mix Veg = 1
-    Employee claims surplus = +1
-
-The employee can now receive:
-
-    Mix Veg = 2
-
-The surplus portion is consumed when claimed.
-
-If the employee later removes that additional surplus portion, the surplus becomes available again.
+This feature is intended to reduce avoidable food waste and make unused portions visible to other employees. The exact available quantities depend on the current shared application state.
 
 ---
 
-# 🌐 Why Supabase Is Needed
+## 📝 Order Edit Requests
 
-The application originally used browser LocalStorage for storing data.
+Employees can request a change after submitting a lunch order.
 
-LocalStorage is useful for simple local testing, but it has an important limitation:
+```text
+Employee submits order
+        |
+        v
+Employee requests an edit
+        |
+        v
+Admin reviews the request
+        |
+        +--> Approve --> Apply the permitted change
+        |
+        +--> Reject  --> Keep the existing order
+```
 
-**LocalStorage is local to each browser/device.**
-
-For example:
-
-    Employee Phone A
-        ↓
-    LocalStorage A
-
-    Employee Phone B
-        ↓
-    LocalStorage B
-
-These two devices do not automatically share the same data.
-
-That creates problems for a real office environment.
+Admin/Owner actions may follow a different path because they have management permissions. Always verify the current behavior in the running application.
 
 ---
 
-# ❌ Problems Without Supabase
+## 📊 Admin Dashboard
 
-Without a shared database:
+The Admin Dashboard brings daily lunch operations together.
 
-### 1. Surplus cannot reliably be shared between phones
+### Daily summary and approvals
 
-If Employee A creates surplus on their phone, Employee B on another phone cannot automatically see it.
+- Review submitted lunch orders and their statuses.
+- Approve orders using the available controls.
+- Review the day's lunch activity.
+- Prepare and send the approved lunch summary to the food owner.
 
-### 2. Orders are not globally shared
+### Employees and access
 
-An order submitted on one device cannot reliably appear on another device.
+- Manage approved employees and administrators.
+- Review requests from unknown employees.
+- Apply the available access-management actions.
 
-### 3. Admin cannot reliably see every employee's order
+### Menu settings
 
-The Admin Dashboard needs one shared source of truth.
+Depending on the current configuration, Admin can manage weekday menu items such as dry sabzi, gravy sabzi, roti, rice, extra items, and salad.
 
-### 4. Access requests cannot reliably reach Admin
+### Booking deadline
 
-If an unknown employee sends an access request from their phone, the Admin's phone/computer needs to receive that request.
-
-### 5. Approval status is not shared
-
-When Admin approves an order, other devices need to see the updated state.
-
-### 6. Menu changes are not shared
-
-If Admin changes the menu, employees need to receive the same updated menu.
+The deadline helps establish the daily cut-off for employee bookings. Confirm the configured time and behavior in the app before using it as an operational policy.
 
 ---
 
-# ✅ What Supabase Solves
+## 📲 WhatsApp Lunch Summary
 
-Supabase provides a shared backend/database layer.
+After reviewing and approving the day's orders, Admin can use the available **Send for Order** action to prepare a WhatsApp message for the food owner.
 
-The application can use Supabase to synchronize:
+The message is designed to be compact and easy to read. It may include the date, total approved orders, regular/special counts, and each order's requested items. The food owner's number is configured by the application; verify it before using the workflow outside a demo.
 
-- 👥 Employees
-- 🍛 Menu
-- 🧾 Orders
-- ♻️ Surplus claims
-- 🔔 Access requests
-- 📝 Edit requests
-- 👑 Admin/Owner related application state
+### Anonymous order labels
 
-The important difference is:
+Instead of including employee names in the generated summary, orders can be represented with labels such as:
 
-    Employee Phone
-          ↓
-       Supabase
-          ↑
-    Admin Computer
-          ↑
-    Other Employee Phones
+```text
+P1
+P2
+P3
+P4
+```
 
-Everyone can work with the same shared data.
+Example format:
+
+```text
+🍱 OFFICE LUNCH ORDER — Sparsh Panipat
+Date: [date]
+Total approved orders: 3
+Regular: 1
+Special: 2
+
+P1: Regular + 1 Kheer extra
+P2: Only Rice
+P3: Only Rice, Roti × 2, Salad
+
+Please prepare the above approved lunch orders.
+```
+
+This is an illustrative example; the exact wording and counts depend on the orders and current application logic.
+
+### Regular, surplus, and only-item orders
+
+- **Regular:** the normal lunch selection.
+- **Regular + surplus:** the normal lunch plus one or more additional surplus portions, where applicable.
+- **Only-item order:** if only one item remains, the summary can use concise wording such as `P1: Only Rice` rather than listing every omitted item.
 
 ---
 
-# 📝 Edit Order Flow
+## 🌐 Why Supabase?
 
-After submitting an order, an employee can request an edit.
+Browser `localStorage` is scoped to a particular browser/device. By itself, it cannot provide a shared source of truth across employees' phones and the Admin's computer.
 
-### Normal employee
+Supabase provides a shared data layer so supported clients can work with the same application state, such as:
 
-    Employee
-       ↓
-    Edit Order
-       ↓
-    Edit Request
-       ↓
-    Admin Dashboard
-       ↓
-    Approve / Reject
+- Employees and access requests
+- Menu configuration
+- Lunch orders and approval state
+- Surplus portions and claims
+- Order-edit requests
+- Other shared application state supported by the current build
 
-If Admin approves the request, the employee's order is updated.
+A public frontend uses browser-accessible configuration, so **Supabase Row Level Security (RLS) and database policies are important**. Do not place a Supabase `service_role` key or other server secrets in frontend variables. A public demo should use a separate project and fictional data only, and its database policies should be reviewed before public use.
+
+---
+
+## 📱 Responsive Design and QR Access
+
+The interface is designed for desktop, laptop, and mobile browsers, including Android phones. The login page may provide a QR code for convenient access.
+
+During local testing, a phone can open the development server's LAN URL if both devices are on the same network and the server is started with host access enabled. For remote access, use the deployed website URL.
+
+---
+
+## 🚀 Run Locally
+
+### Requirements
+
+- Node.js and npm
+- A Supabase project configured for the application
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Configure environment variables
+
+Create a local `.env` file in the project root. Use `.env.example` as a guide and fill in the values from your **demo Supabase project**:
+
+```dotenv
+VITE_APP_URL=http://localhost:5173
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
+```
+
+Use the exact variable names expected by the code. Never commit the real `.env` file or put a service-role key in a `VITE_` variable.
+
+### 3. Start the development server
+
+```bash
+npm run dev
+```
+
+To test from another device on the same Wi-Fi network:
+
+```bash
+npm run dev -- --host
+```
+
+Open the local or network URL printed by Vite.
+
+---
+
+## 🏗️ Production Build
+
+Create an optimized build:
+
+```bash
+npm run build
+```
+
+Preview the built application locally:
+
+```bash
+npm run preview
+```
+
+Resolve build errors and test the important employee and Admin flows before deploying.
+
+---
+
+## ☁️ Deploy to Vercel
+
+A typical deployment flow is:
+
+```text
+VS Code -> Git -> GitHub -> Vercel -> Live website
+```
+
+1. Push the project to GitHub.
+2. Import the repository into Vercel.
+3. Use the Vite framework preset.
+4. Set the build command to `npm run build`.
+5. Set the output directory to `dist`.
+6. Add the required environment variables in Vercel Project Settings.
+7. Deploy and test the live URL.
+
+Configure `VITE_APP_URL`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_PUBLISHABLE_KEY` with the appropriate **demo** values. After the first deployment, update `VITE_APP_URL` to the deployed URL if the application requires it, then redeploy.
+
+Never commit real environment files. Remember that Vite variables are included in the client bundle; only browser-safe publishable values belong there.
+
+---
+
+## 🐙 Git and GitHub Workflow
+
+After editing files in VS Code, run the following commands from the project directory:
+
+```bash
+git status
+npm run build
+git add README.md
+git commit -m "Update README with booking deadline documentation"
+git push origin main
+```
+
+These commands stage **only `README.md`**, so unrelated local changes are not accidentally included in this README update. If your branch is not named `main`, replace it with the correct branch name.
+
+---
+
+## 🧪 Suggested Test Checklist
+
+### Employee
+
+- [ ] Approved employee can log in.
+- [ ] Today's menu appears correctly.
+- [ ] Quantity controls and configured limits work.
+- [ ] Same-vegetable option works as expected.
+- [ ] Surplus portions appear and can be claimed.
+- [ ] Releasing a surplus claim restores availability where supported.
+- [ ] Employee can submit a lunch booking before the deadline.
+- [ ] Booking behavior after the deadline matches the intended policy.
+- [ ] Submitted order is visible to Admin.
+
+### Edit requests
+
+- [ ] Employee can request an edit.
+- [ ] Admin can view the request.
+- [ ] Admin can approve or reject it.
+- [ ] An approved request updates the order as expected.
 
 ### Admin / Owner
 
-Admin/Owner changes can be applied directly because the Admin/Owner is the approving authority.
+- [ ] Admin/Owner login and dashboard access work.
+- [ ] Daily summary and order statuses load correctly.
+- [ ] Employee management and access requests work.
+- [ ] Menu settings work.
+- [ ] Order approval controls work.
+- [ ] Booking deadline and its displayed/configured time are correct.
+- [ ] The permitted Admin/Owner booking flow works.
+- [ ] The WhatsApp action opens the expected message.
+
+### WhatsApp and mobile
+
+- [ ] Generated summary uses anonymous labels as intended.
+- [ ] Counts and item descriptions match approved orders.
+- [ ] The food-owner contact is correct.
+- [ ] Login, menu, ordering, and deadline behavior are usable on a phone.
 
 ---
 
-# 📊 Admin Dashboard
+## 🔐 Security and Demo Limitations
 
-The Admin Dashboard contains the main management areas.
+This project demonstrates an office lunch workflow; the current login and data-access design should not automatically be treated as production-grade security.
 
-## Today's Summary
+Before using a public deployment with real users or real operational data:
 
-Admin can:
-
-- View today's submitted orders
-- See approval status
-- Approve orders
-- Approve all orders
-- Review lunch activity
-- Send approved orders to the food owner
-
-## 👥 Employees & Admins
-
-Admin can manage approved employees and administrators.
-
-## 🔔 Access Requests
-
-Unknown employee login requests can appear here for Admin review.
-
-## 🍽️ Menu Settings
-
-Admin can manage the lunch menu for the available weekdays.
-
-Menu settings can include:
-
-- Dry sabzi
-- Gravy sabzi
-- Roti
-- Rice
-- Extra item
-- Salad
+- Use a separate Supabase project for the demo.
+- Use fictional records only in a public portfolio demo.
+- Review and test Supabase RLS policies and access permissions.
+- Never expose a Supabase `service_role` key, database password, or other private secret in frontend code or GitHub.
+- Keep `.env` out of version control.
+- Strengthen identity verification and role-based authorization before handling sensitive data.
+- Test booking-deadline behavior and the relevant time zone before relying on it operationally.
 
 ---
 
-# 📲 WhatsApp Food Order
+## 🎨 Design
 
-After lunch orders are approved, Admin can click:
-
-**Send for Order**
-
-The application generates a short WhatsApp message for the food owner.
-
-The food sender number is configured inside:
-
-    src/pages/AdminDashboard.jsx
-
-The application converts a normal 10-digit Indian number into the WhatsApp country-code format automatically.
-
-For example:
-
-    9876543210
-
-becomes:
-
-    919876543210
-
-The WhatsApp message is opened through a WhatsApp deeplink.
+The UI uses an emerald-green and gold/amber palette, thali-inspired visuals, card-based layouts, smooth animations, dark mode, responsive components, and a custom lunch/thali favicon. The goal is to keep daily lunch ordering simple for employees while giving Admin/Owner users a centralized management workflow.
 
 ---
 
-# 🔐 Anonymous WhatsApp Format
-
-Employee names are intentionally **not exposed** in the food-order WhatsApp message.
-
-Instead, anonymous placeholders are used:
-
-    P1
-    P2
-    P3
-    P4
-
-This keeps the message short and avoids exposing employee names.
-
----
-
-# 📱 WhatsApp Message Example
-
-A typical generated message looks like:
-
-    🍱 OFFICE LUNCH ORDER Sparsh Panipat
-    Date: 14 Aug 2026
-    Total approved orders: 3
-
-    Regular: 1
-    Special: 2
-
-    P1 : Regular + 1 Kheer extra
-    P2 : Only Rice
-    P3 : Only Rice, Roti × 2, Salad
-
-    Please prepare the above approved lunch orders.
-
-The exact contents depend on the approved orders for that day.
-
----
-
-# 🍮 Regular + Surplus
-
-An important distinction is made between:
-
-### Regular order
-
-The employee has the normal lunch quantity.
-
-### Regular + surplus
-
-The employee has the normal lunch plus one or more surplus portions.
-
-For example:
-
-    Normal lunch + 1 Kheer
-
-This can be represented compactly as:
-
-    P1 : Regular + 1 Kheer extra
-
-This prevents a normal lunch that simply consumes surplus food from being incorrectly described as a completely modified/special lunch.
-
----
-
-# 🍚 Only Item Orders
-
-When an employee removes all normal food except one item, the WhatsApp message uses a compact format.
-
-For example:
-
-    P1 : Only Rice
-
-Instead of displaying every excluded item such as:
-
-    -1 Sabzi
-    -4 Roti
-    -1 Salad
-    -1 Kheer
-
-This keeps the food-owner WhatsApp message short and easy to understand.
-
----
-
-# 🫓 Roti Naming
-
-The application intentionally displays:
-
-**Roti**
-
-instead of the internal category name:
-
-**Bread**
-
-For example:
-
-    Roti × 2
-
----
-
-# 📱 Mobile Support
-
-The application is designed to work on:
-
-- 💻 Desktop
-- 💻 Laptop
-- 📱 Android phones
-- 📱 Mobile browsers
-- 📱 Office devices connected to the same network during local testing
-
-The UI is responsive and adapts to smaller screens.
-
----
-
-# 🔗 QR Code
-
-The login page can provide a QR code for quick access.
-
-Employees can scan the QR code using their phone.
-
-For local development, the application can be accessed through the computer's LAN IP when both devices are connected to the same Wi-Fi network.
-
-For permanent office use, the deployed Vercel URL can be used.
-
----
-
-# 🚀 Running the Project Locally
-
-Install dependencies:
-
-    npm install
-
-Start the development server:
-
-    npm run dev
-
-For phone testing on the same Wi-Fi network:
-
-    npm run dev -- --host
-
-Vite will provide a local network URL that can be opened from another device connected to the same network.
-
----
-
-# 🏗️ Production Build
-
-To create a production build:
-
-    npm run build
-
-To preview the production build locally:
-
-    npm run preview
-
-Always check that the build completes successfully before deploying a new version.
-
----
-
-# 🔐 Environment Variables
-
-The project uses environment variables for configuration.
-
-Typical Vite variables include:
-
-    VITE_APP_URL
-    VITE_SUPABASE_URL
-    VITE_SUPABASE_PUBLISHABLE_KEY
-
-The actual configuration values should remain inside the local `.env` file and should not be committed if the project is configured to ignore `.env`.
-
-A `.env.example` file can be used to show required variable names without exposing real credentials.
-
----
-
-# ☁️ Vercel Deployment
-
-The project is deployed using Vercel.
-
-Typical deployment flow:
-
-    VS Code
-       ↓
-    Git
-       ↓
-    GitHub
-       ↓
-    Vercel
-       ↓
-    Live Website
-
-After pushing changes to the connected GitHub repository, Vercel can automatically create a new deployment.
-
-Environment variables must also be configured inside the Vercel project.
-
----
-
-# 🐙 GitHub Workflow
-
-After making changes locally:
-
-    git status
-
-Then:
-
-    git add .
-
-Create a commit:
-
-    git commit -m "Update lunch ordering application"
-
-Push:
-
-    git push origin main
-
-If the repository uses another branch, replace `main` with that branch name.
-
----
-
-# 🔄 Typical Update Flow
-
-For future changes:
-
-    1. Edit the project in VS Code
-    2. Test locally
-    3. Run npm run build
-    4. Check git status
-    5. git add .
-    6. git commit -m "Describe the update"
-    7. git push origin main
-    8. Vercel deploys the updated version
-
----
-
-# 🧪 Testing Checklist
-
-## Employee
-
-- [ ] Employee can log in
-- [ ] Today's menu appears
-- [ ] Quantity buttons work
-- [ ] Normal limits work
-- [ ] Same-sabzi option works
-- [ ] Surplus appears when another employee creates it
-- [ ] Surplus can be claimed
-- [ ] Claimed surplus disappears
-- [ ] Releasing surplus makes it available again
-- [ ] Order can be submitted
-- [ ] Submitted order is visible to Admin
-
-## Edit Order
-
-- [ ] Employee can request an edit
-- [ ] Admin sees the edit request
-- [ ] Admin can approve
-- [ ] Admin can reject
-- [ ] Approved edit updates the order
-- [ ] Admin/Owner direct edit works
-
-## Admin
-
-- [ ] Admin login works
-- [ ] Today's Summary loads
-- [ ] Employees/Admins section works
-- [ ] Access Requests works
-- [ ] Menu Settings works
-- [ ] Orders can be approved
-- [ ] Approve All works
-- [ ] Book My Lunch works
-- [ ] Back button returns to Admin Dashboard
-- [ ] Send for Order opens WhatsApp
-
-## WhatsApp
-
-- [ ] Employee names are not exposed
-- [ ] P1/P2/P3 placeholders are used
-- [ ] Regular count is correct
-- [ ] Special count is correct
-- [ ] Regular + surplus is represented correctly
-- [ ] Only-item orders use compact wording
-- [ ] Roti is displayed instead of Bread
-- [ ] Food owner number is correct
-
-## Mobile
-
-- [ ] Login works on phone
-- [ ] Menu is readable
-- [ ] Quantity controls work
-- [ ] Surplus works
-- [ ] WhatsApp opens correctly
-
----
-
-# 🔒 Important Security Note
-
-The current login workflow is designed for the office's practical internal use.
-
-It should not be considered a high-security authentication system because the employee login flow does not use passwords or full identity verification.
-
-For a future production-grade system, authentication could be strengthened with:
-
-- Supabase Auth
-- OTP
-- Email/password
-- Employee accounts
-- Role-based access control
-- Row Level Security policies
-
----
-
-# 🧠 Why the Architecture Uses Supabase
-
-The application has many actions that need to be shared between different devices.
-
-For example:
-
-    Employee A removes Kheer
-             ↓
-    1 Kheer surplus created
-             ↓
-         Supabase
-             ↓
-    Employee B sees surplus
-             ↓
-    Employee B claims Kheer
-             ↓
-         Supabase
-             ↓
-    Surplus decreases
-
-The same shared-data concept applies to:
-
-    Orders
-    Approvals
-    Employees
-    Menu
-    Access Requests
-    Edit Requests
-
-This is why Supabase is important for the multi-device office version.
-
----
-
-# 🎨 Design
-
-The UI follows a modern food-ordering design language using:
-
-- 💚 Emerald green
-- 🟡 Golden / amber accents
-- 🥣 Thali-inspired visuals
-- 🧊 Glassmorphism cards
-- ✨ Smooth animations
-- 🌙 Dark mode
-- 📱 Responsive layouts
-- 🔖 Custom lunch/thali favicon
-
-The visual design is intended to feel professional while still being friendly and easy for employees to use.
-
----
-
-# 📌 Current Project Purpose
-
-This project is designed as an internal office lunch-management system.
-
-It replaces informal manual lunch collection with a centralized digital workflow.
-
-Instead of employees communicating their lunch requirements individually, the application provides:
-
-    Employee
-       ↓
-    Select lunch
-       ↓
-    Submit order
-       ↓
-    Admin reviews
-       ↓
-    Approve
-       ↓
-    Generate compact WhatsApp order
-       ↓
-    Food Owner prepares lunch
-
----
-
-# 🌟 Final Result
-
-LunchBox Panipat provides one complete workflow for:
-
-**Employee → Lunch Selection → Surplus → Order → Admin Approval → WhatsApp → Food Owner**
-
-The combination of React, Supabase, and Vercel provides a responsive user interface, shared office data, and a publicly accessible deployed application.
-
----
-
-## 👨‍💻 Project
-
-**LunchBox Panipat**
-
-**Organization:** Sparsh CCTV, Panipat
-
-**Purpose:** Internal Office Lunch Ordering & Management
-
-**Frontend:** React + Vite
-
-**Database:** Supabase
-
-**Hosting:** Vercel
-
-**Source Control:** GitHub
+## 📌 Project Summary
+
+**LunchBox Panipat** brings the main lunch-management process into one application:
+
+**Select lunch → Submit before the deadline → Review and approve → Prepare WhatsApp summary → Serve lunch**
+
+| Item | Details |
+|---|---|
+| Project | LunchBox Panipat |
+| Organization context | Sparsh CCTV, Panipat |
+| Purpose | Office lunch ordering and management |
+| Frontend | React + Vite |
+| Shared data | Supabase |
+| Hosting | Vercel |
+| Source control | GitHub |
 
 ---
 
