@@ -43,7 +43,7 @@ import EmployeePortal from "./EmployeePortal.jsx";
 // Replace this 10-digit number with the real food sender / kitchen WhatsApp number.
 // Country code is intentionally NOT included here.
 // For India, wa.me will use +91 automatically.
-const FOOD_SENDER_PHONE = "9896510890";
+const FOOD_SENDER_PHONE = "REPLACE_WITH_YOUR_WHATSAPP_NUMBER";
 
 const TABS = [
   {
